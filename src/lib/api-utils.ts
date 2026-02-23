@@ -67,3 +67,23 @@ export async function generateId(prefix: string, table: any): Promise<string> {
 
     return `${prefix}-${date}-${sequence.toString().padStart(3, '0')}`;
 }
+
+export async function generateLeadReference(table: any): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = `#IT-${year}`;
+
+    const lastRecord = await db.select({ reference_id: table.reference_id })
+        .from(table)
+        .where(sql`${table.reference_id} LIKE ${prefix + '-%'}`)
+        .orderBy(desc(table.reference_id))
+        .limit(1);
+
+    let sequence = 1;
+    if (lastRecord.length > 0 && lastRecord[0].reference_id) {
+        const lastRef = lastRecord[0].reference_id;
+        const lastSeq = parseInt(lastRef.split('-').pop() || '0');
+        sequence = lastSeq + 1;
+    }
+
+    return `${prefix}-${sequence.toString().padStart(5, '0')}`;
+}

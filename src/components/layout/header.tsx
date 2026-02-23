@@ -1,13 +1,16 @@
 "use client";
 
-import React from 'react';
-import { Search, Bell, LogOut } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Search, Bell, LogOut, User, ChevronDown, Settings, CreditCard } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 export function Header() {
     const router = useRouter();
     const supabase = createClient();
+    const [isProfileOpen, setIsProfileOpen] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
 
     const handleLogout = async () => {
         await supabase.auth.signOut();
@@ -15,33 +18,94 @@ export function Header() {
         router.refresh();
     };
 
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsProfileOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, []);
+
     return (
-        <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-md border-b border-gray-100 px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-4 flex-1 max-w-xl">
-                <h2 className="text-lg font-bold text-gray-700 md:hidden">iTarang</h2>
-                <div className="relative w-full hidden md:block">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <header className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shadow-sm">
+            {/* Search Bar */}
+            <div className="flex items-center gap-4 flex-1 max-w-2xl">
+                <h2 className="text-xl font-bold text-brand-600 md:hidden">iTarang</h2>
+                <div className="relative w-full max-w-md hidden md:block group">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-brand-500 transition-colors" />
                     <input
                         type="text"
                         placeholder="Search for anything..."
-                        className="w-full pl-11 pr-4 py-2.5 bg-gray-50 border-none rounded-xl text-sm focus:ring-2 focus:ring-brand-100 focus:bg-white transition-all placeholder-gray-400 outline-none"
+                        className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-transparent rounded-lg text-sm focus:ring-2 focus:ring-brand-100 focus:bg-white focus:border-brand-200 transition-all placeholder-gray-400 outline-none"
                     />
                 </div>
             </div>
 
+            {/* Right Actions */}
             <div className="flex items-center gap-4">
-                <button className="relative p-2.5 bg-white border border-gray-100 rounded-xl hover:bg-gray-50 text-gray-500 transition-colors shadow-sm focus:outline-none">
+                <button className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors">
                     <Bell className="w-5 h-5" />
-                    <span className="absolute top-2 right-2.5 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
                 </button>
-                <button
-                    onClick={handleLogout}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 text-sm font-medium transition-all active:scale-95 shadow-sm border border-red-100"
-                >
-                    <LogOut className="w-4 h-4" />
-                    Logout
-                </button>
+
+                {/* Profile Dropdown */}
+                <div className="relative" ref={dropdownRef}>
+                    <button
+                        onClick={() => setIsProfileOpen(!isProfileOpen)}
+                        className="flex items-center gap-2 hover:bg-gray-50 p-1.5 rounded-lg transition-colors focus:outline-none"
+                    >
+                        <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold border border-brand-200">
+                            RS
+                        </div>
+                        <div className="hidden md:block text-left">
+                            <p className="text-sm font-medium text-gray-700 leading-none">Rahul Sharma</p>
+                            <p className="text-xs text-gray-500">Dealer</p>
+                        </div>
+                        <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {/* Dropdown Menu */}
+                    {isProfileOpen && (
+                        <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 py-2 animate-in fade-in slide-in-from-top-2">
+                            <div className="px-4 py-2 border-b border-gray-50 md:hidden">
+                                <p className="text-sm font-medium text-gray-900">Rahul Sharma</p>
+                                <p className="text-xs text-gray-500">rahul.sharma@itarang.com</p>
+                            </div>
+
+                            <div className="py-1">
+                                <Link href="/profile" className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">
+                                    <User className="w-4 h-4" />
+                                    View Profile
+                                </Link>
+                                <button className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">
+                                    <Settings className="w-4 h-4" />
+                                    Change Password
+                                </button>
+                                <button className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">
+                                    <CreditCard className="w-4 h-4" />
+                                    Subscription: <span className="text-green-600 font-medium text-xs bg-green-50 px-1.5 py-0.5 rounded-full">Active</span>
+                                </button>
+                            </div>
+
+                            <div className="border-t border-gray-100 my-1"></div>
+
+                            <button
+                                onClick={handleLogout}
+                                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                                <LogOut className="w-4 h-4" />
+                                Logout
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
         </header>
     );
 }
+

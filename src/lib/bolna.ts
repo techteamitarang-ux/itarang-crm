@@ -1,7 +1,7 @@
 
-const BOLNA_API_KEY = 'bn-16531e1a19094d52bcd22846cbbc05a0';
-const BOLNA_AGENT_ID = 'a6f32c49-0d97-43f1-9a66-9150027a47dd';
-const BOLNA_BASE_URL = 'https://api.bolna.ai';
+const BOLNA_API_KEY = process.env.BOLNA_API_KEY;
+const BOLNA_AGENT_ID = process.env.BOLNA_AGENT_ID;
+const BOLNA_BASE_URL = process.env.BOLNA_BASE_URL || 'https://api.bolna.ai';
 
 export async function triggerBolnaCall(phoneNumber: string, leadId: string, leadDetails: any = {}) {
     if (!BOLNA_API_KEY || !BOLNA_AGENT_ID) {

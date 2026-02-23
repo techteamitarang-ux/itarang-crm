@@ -83,12 +83,16 @@ export default async function LeadsPage() {
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <CallButton leadId={lead.id} />
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <Link href={`/leads/${lead.id}/edit`} className="text-indigo-600 hover:text-indigo-900 hover:underline mr-4">
-                                            Edit
+                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                                        <Link href={`/leads/${lead.id}/edit`}>
+                                            <Button variant="ghost" size="sm" className="text-indigo-600 hover:text-indigo-900">
+                                                Edit
+                                            </Button>
                                         </Link>
-                                        <Link href={`/leads/${lead.id}`} className="text-brand-600 hover:text-brand-900 hover:underline">
-                                            View
+                                        <Link href={`/leads/${lead.id}`}>
+                                            <Button variant="ghost" size="sm" className="text-brand-600 hover:text-brand-900">
+                                                View
+                                            </Button>
                                         </Link>
                                     </td>
                                 </tr>

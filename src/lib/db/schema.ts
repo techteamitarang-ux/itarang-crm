@@ -139,6 +139,21 @@ export const leads = pgTable('leads', {
     family_members: integer('family_members'),
     driving_experience: integer('driving_experience'),
     lead_type: varchar('lead_type', { length: 20 }), // hot, warm, cold
+    vehicle_rc: varchar('vehicle_rc', { length: 50 }),
+
+    // V2 Step 1 Mapping (Additive)
+    full_name: text('full_name'),
+    father_or_husband_name: text('father_or_husband_name'),
+    dob: timestamp('dob', { withTimezone: true }),
+    phone: varchar('phone', { length: 20 }),
+    current_address: text('current_address'),
+    product_category_id: uuid('product_category_id'), // User requested uuid
+    vehicle_owner_name: text('vehicle_owner_name'),
+    vehicle_owner_phone: varchar('vehicle_owner_phone', { length: 20 }),
+    auto_filled: boolean('auto_filled').default(false).notNull(),
+    ocr_status: varchar('ocr_status', { length: 20 }), // success, partial, failed
+    ocr_error: text('ocr_error'),
+    reference_id: varchar('reference_id', { length: 255 }).unique(),
 
     // Business Details
     interested_in: jsonb('interested_in'), // Array of product IDs
@@ -154,6 +169,20 @@ export const leads = pgTable('leads', {
     // Conversion
     converted_deal_id: varchar('converted_deal_id', { length: 255 }),
     converted_at: timestamp('converted_at', { withTimezone: true }),
+
+    // AI Call tracking
+    total_ai_calls: integer('total_ai_calls').default(0),
+    last_ai_call_at: timestamp('last_ai_call_at', { withTimezone: true }),
+    last_call_outcome: text('last_call_outcome'),
+    ai_priority_score: decimal('ai_priority_score', { precision: 5, scale: 2 }),
+    next_call_after: timestamp('next_call_after', { withTimezone: true }),
+    do_not_call: boolean('do_not_call').default(false),
+
+    // V2 Workflow
+    status: varchar('status', { length: 50 }).default('INCOMPLETE').notNull(), // INCOMPLETE, ACTIVE, CONVERTED, ABANDONED
+    workflow_step: integer('workflow_step').default(1).notNull(),
+    primary_product_id: varchar('primary_product_id', { length: 255 }).references(() => productCatalog.id),
+    lead_score: integer('lead_score'), // hot=90, warm=60, cold=30
 
     // Metadata
     uploader_id: uuid('uploader_id').references(() => users.id).notNull(),
@@ -197,8 +226,16 @@ export const personalDetails = pgTable('personal_details', {
     marital_status: varchar('marital_status', { length: 20 }),
     spouse_name: text('spouse_name'),
     local_address: text('local_address'),
+
+    // OCR Confidence
+    dob_confidence: decimal('dob_confidence', { precision: 5, scale: 2 }),
+    name_confidence: decimal('name_confidence', { precision: 5, scale: 2 }),
+    address_confidence: decimal('address_confidence', { precision: 5, scale: 2 }),
+    ocr_processed_at: timestamp('ocr_processed_at', { withTimezone: true }),
+
     created_at: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
 
 export const documents = pgTable('documents', {
     id: uuid('id').defaultRandom().primaryKey(),
@@ -206,6 +243,16 @@ export const documents = pgTable('documents', {
     document_type: varchar('document_type', { length: 50 }).notNull(),
     file_url: text('file_url').notNull(),
     uploaded_at: timestamp('uploaded_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const leadDocuments = pgTable('lead_documents', {
+    id: varchar('id', { length: 255 }).primaryKey(),
+    lead_id: varchar('lead_id', { length: 255 }).references(() => leads.id, { onDelete: 'cascade' }),
+    dealer_id: varchar('dealer_id', { length: 255 }).references(() => accounts.id),
+    user_id: uuid('user_id').references(() => users.id),
+    doc_type: varchar('doc_type', { length: 100 }).notNull(),
+    storage_path: text('storage_path').notNull(), // private/dealer_id/lead_id/filename
+    created_at: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 export const leadAssignments = pgTable('lead_assignments', {
@@ -502,6 +549,38 @@ export const aiCallLogs = pgTable('ai_call_logs', {
     };
 });
 
+// --- AI CALLS ---
+
+export const callSessions = pgTable('call_sessions', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    session_id: text('session_id').unique(), // External ID
+    status: text('status').default('active'), // active, completed
+    created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    ended_at: timestamp('ended_at', { withTimezone: true }),
+});
+
+export const callRecords = pgTable('call_records', {
+    id: varchar('id', { length: 255 }).primaryKey(),
+    session_id: text('session_id').references(() => callSessions.session_id),
+    lead_id: varchar('lead_id', { length: 255 }).references(() => leads.id),
+    bolna_call_id: varchar('bolna_call_id', { length: 255 }).unique(),
+    status: text('status').default('queued'), // queued, ringing, completed, failed
+    duration_seconds: integer('duration_seconds'),
+    recording_url: text('recording_url'),
+    summary: text('summary'),
+    transcript: text('transcript'),
+    created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    ended_at: timestamp('ended_at', { withTimezone: true }),
+});
+
+export const conversationMessages = pgTable('conversation_messages', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    call_record_id: varchar('call_record_id', { length: 255 }).references(() => callRecords.id), // Link to record
+    role: text('role'), // 'user', 'assistant'
+    message: text('message'),
+    timestamp: timestamp('timestamp', { withTimezone: true }).defaultNow(),
+});
+
 // --- RELATIONS ---
 
 export const usersRelations = relations(users, ({ many }) => ({
@@ -517,6 +596,8 @@ export const usersRelations = relations(users, ({ many }) => ({
     slasEscalatedTo: many(slas, { relationName: 'sla_escalated' }),
     leadsQualified: many(leads, { relationName: 'qualified_by_user' }),
     pdiInspections: many(pdiRecords, { relationName: 'pdi_service_engineer' }),
+    campaigns: many(campaigns),
+    loanApplications: many(loanApplications),
 }));
 
 export const productCatalogRelations = relations(productCatalog, ({ one, many }) => ({
@@ -545,6 +626,7 @@ export const leadsRelations = relations(leads, ({ one, many }) => ({
     deals: many(deals),
     bolnaCalls: many(bolnaCalls),
     aiCallLogs: many(aiCallLogs),
+    loanApplications: many(loanApplications),
 }));
 
 export const leadAssignmentsRelations = relations(leadAssignments, ({ one }) => ({
@@ -617,4 +699,64 @@ export const bolnaCallsRelations = relations(bolnaCalls, ({ one }) => ({
 
 export const aiCallLogsRelations = relations(aiCallLogs, ({ one }) => ({
     lead: one(leads, { fields: [aiCallLogs.lead_id], references: [leads.id] }),
+}));
+export const callSessionsRelations = relations(callSessions, ({ many }) => ({
+    records: many(callRecords),
+}));
+
+export const callRecordsRelations = relations(callRecords, ({ one, many }) => ({
+    session: one(callSessions, { fields: [callRecords.session_id], references: [callSessions.session_id] }),
+    lead: one(leads, { fields: [callRecords.lead_id], references: [leads.id] }),
+    messages: many(conversationMessages),
+}));
+
+export const conversationMessagesRelations = relations(conversationMessages, ({ one }) => ({
+    record: one(callRecords, { fields: [conversationMessages.call_record_id], references: [callRecords.id] }),
+}));
+
+
+
+// --- DEALER ADDITIONS (SOP Refinements) ---
+
+export const campaigns = pgTable('campaigns', {
+    id: varchar('id', { length: 255 }).primaryKey(), // CAMP-YYYYMMDD-XXX
+    name: text('name').notNull(),
+    type: varchar('type', { length: 50 }).notNull(), // sms, whatsapp, email
+    status: varchar('status', { length: 20 }).default('draft').notNull(), // draft, scheduled, running, completed
+    audience_filter: jsonb('audience_filter'), // Logic for segments
+    message_content: text('message_content'),
+    total_audience: integer('total_audience'),
+    cost: decimal('cost', { precision: 10, scale: 2 }),
+    created_by: uuid('created_by').references(() => users.id).notNull(),
+    started_at: timestamp('started_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// For "Process Loan" workflow tracking
+export const loanApplications = pgTable('loan_applications', {
+    id: varchar('id', { length: 255 }).primaryKey(), // LOAN-APP-XXX
+    lead_id: varchar('lead_id', { length: 255 }).references(() => leads.id).notNull(),
+    applicant_name: text('applicant_name'), // De-normalized for list views
+    loan_amount: decimal('loan_amount', { precision: 12, scale: 2 }),
+
+    // Status Flow
+    documents_uploaded: boolean('documents_uploaded').default(false),
+    company_validation_status: varchar('company_validation_status', { length: 20 }).default('pending').notNull(), // pending, passed, failed
+    facilitation_fee_status: varchar('facilitation_fee_status', { length: 20 }).default('pending').notNull(), // pending, paid
+    application_status: varchar('application_status', { length: 20 }).default('new').notNull(), // new, processing, approved, disbursed, rejected
+
+    facilitation_fee_amount: decimal('facilitation_fee_amount', { precision: 10, scale: 2 }),
+
+    created_by: uuid('created_by').references(() => users.id),
+    created_at: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const campaignsRelations = relations(campaigns, ({ one }) => ({
+    creator: one(users, { fields: [campaigns.created_by], references: [users.id] }),
+}));
+
+export const loanApplicationsRelations = relations(loanApplications, ({ one }) => ({
+    lead: one(leads, { fields: [loanApplications.lead_id], references: [leads.id] }),
+    creator: one(users, { fields: [loanApplications.created_by], references: [users.id] }),
 }));

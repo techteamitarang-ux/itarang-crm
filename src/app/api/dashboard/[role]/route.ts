@@ -91,6 +91,7 @@ export const GET = withErrorHandler(async (req: Request, { params }: { params: P
         const topSalesManagersRaw = await db.execute(sql`
             SELECT 
                 u.name,
+                u.id,
                 'Region ' || SUBSTR(u.id::text, 1, 2) as region,
                 COUNT(l.id)::integer as leads,
                 CASE 

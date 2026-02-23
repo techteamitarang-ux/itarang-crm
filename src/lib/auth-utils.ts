@@ -29,6 +29,7 @@ export async function requireAuth() {
                 name: user.email?.split('@')[0] || 'User',
                 email: user.email || '',
                 role: 'user', // Default low-privilege role
+                dealer_id: null,
             };
         }
 

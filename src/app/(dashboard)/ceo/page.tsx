@@ -122,9 +122,11 @@ export default function CEODashboard() {
                                 <span className="text-xs font-medium text-gray-600">Active Procurement</span>
                                 <span className="text-xs font-bold text-blue-700">₹{(Number(m.procurementStats?.activeValue ?? 0) / 100000).toFixed(1)}L</span>
                             </div>
-                            <button className="w-full py-2.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 rounded-xl transition-colors flex items-center justify-center gap-2 mt-2">
-                                Review Procurement <ArrowRight className="w-3 h-3" />
-                            </button>
+                            <Link href="/procurement">
+                                <button className="w-full py-2.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 rounded-xl transition-colors flex items-center justify-center gap-2 mt-2">
+                                    Review Procurement <ArrowRight className="w-3 h-3" />
+                                </button>
+                            </Link>
                         </div>
                     </div>
 
@@ -135,9 +137,11 @@ export default function CEODashboard() {
                             <p className="text-xs text-brand-100 mt-1 opacity-80 leading-relaxed">
                                 Monitor employee performance and manage sales head allocations directly from the HR console.
                             </p>
-                            <button className="mt-4 px-4 py-2 bg-white text-brand-700 text-xs font-bold rounded-lg shadow-sm hover:bg-brand-50 transition-colors">
-                                Open Console
-                            </button>
+                            <Link href="/hr">
+                                <button className="mt-4 px-4 py-2 bg-white text-brand-700 text-xs font-bold rounded-lg shadow-sm hover:bg-brand-50 transition-colors">
+                                    Open Console
+                                </button>
+                            </Link>
                         </div>
                         <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
                     </div>
@@ -148,23 +152,27 @@ export default function CEODashboard() {
             <div className="p-6 rounded-2xl bg-white border border-gray-100 shadow-sm">
                 <div className="flex items-center justify-between mb-6">
                     <h3 className="text-sm font-semibold text-gray-900">Top Performing Sales Managers</h3>
-                    <button className="text-xs font-semibold text-brand-700 hover:underline">View All Teams</button>
+                    <Link href="/sales-head">
+                        <button className="text-xs font-semibold text-brand-700 hover:underline">View All Teams</button>
+                    </Link>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     {(m.topSalesManagers || []).map((manager: any) => (
-                        <div key={manager.name} className="flex items-center gap-4 p-4 rounded-xl border border-gray-50 bg-gray-50/50 hover:bg-white hover:border-brand-100 transition-all cursor-default group">
-                            <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-sm">
-                                {manager.name.split(' ').map((n: string) => n[0]).join('')}
+                        <Link key={manager.id} href={`/sales-head/${manager.id}`}>
+                            <div className="flex items-center gap-4 p-4 rounded-xl border border-gray-50 bg-gray-50/50 hover:bg-white hover:border-brand-100 transition-all cursor-pointer group">
+                                <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-sm">
+                                    {manager.name.split(' ').map((n: string) => n[0]).join('')}
+                                </div>
+                                <div className="flex-1">
+                                    <p className="text-sm font-bold text-gray-900">{manager.name}</p>
+                                    <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">{manager.region}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-xs font-bold text-brand-700">{manager.conversion}</p>
+                                    <p className="text-[10px] text-gray-400 font-medium">Conv.</p>
+                                </div>
                             </div>
-                            <div className="flex-1">
-                                <p className="text-sm font-bold text-gray-900">{manager.name}</p>
-                                <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">{manager.region}</p>
-                            </div>
-                            <div className="text-right">
-                                <p className="text-xs font-bold text-brand-700">{manager.conversion}</p>
-                                <p className="text-[10px] text-gray-400 font-medium">Conv.</p>
-                            </div>
-                        </div>
+                        </Link>
                     ))}
                 </div>
             </div>
