@@ -5,11 +5,13 @@ import { Search, Bell, LogOut, User, ChevronDown, Settings, CreditCard } from 'l
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { GlobalSearchOverlay } from '@/components/search/GlobalSearchOverlay';
 
 export function Header() {
     const router = useRouter();
     const supabase = createClient();
     const [isProfileOpen, setIsProfileOpen] = useState(false);
+    const [isSearchOpen, setIsSearchOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     const handleLogout = async () => {
@@ -33,17 +35,20 @@ export function Header() {
 
     return (
         <header className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shadow-sm">
+            <GlobalSearchOverlay isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
             {/* Search Bar */}
             <div className="flex items-center gap-4 flex-1 max-w-2xl">
                 <h2 className="text-xl font-bold text-brand-600 md:hidden">iTarang</h2>
-                <div className="relative w-full max-w-md hidden md:block group">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-brand-500 transition-colors" />
-                    <input
-                        type="text"
-                        placeholder="Search for anything..."
-                        className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-transparent rounded-lg text-sm focus:ring-2 focus:ring-brand-100 focus:bg-white focus:border-brand-200 transition-all placeholder-gray-400 outline-none"
-                    />
-                </div>
+                <button
+                    type="button"
+                    onClick={() => setIsSearchOpen(true)}
+                    className="relative w-full max-w-md hidden md:block group text-left"
+                >
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-hover:text-brand-500 transition-colors" />
+                    <div className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-transparent rounded-lg text-sm group-hover:bg-white group-hover:border-gray-200 group-hover:shadow-sm transition-all text-gray-500">
+                        Search for anything…
+                    </div>
+                </button>
             </div>
 
             {/* Right Actions */}
@@ -108,4 +113,3 @@ export function Header() {
         </header>
     );
 }
-

@@ -3,19 +3,17 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
-    CheckCircle2, Save, User, ArrowLeft, ArrowRight, Loader2,
-    Banknote, FileCheck, Filter, UploadCloud, X, AlertCircle,
-    Info, Scan, Plus, Trash2, AlertTriangle, Calendar
+    CheckCircle2, User, Loader2, Banknote, Filter,
+    UploadCloud, X, AlertCircle, Scan, Plus, Info,
+    Calendar, ChevronRight, Camera, Shield, ChevronLeft,
+    Sparkles, HelpCircle, Save, ArrowRight
 } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthProvider';
-import { HelpModal, AutofillModal, DuplicateModal } from '@/components/leads/lead-v2-modals';
 
-const steps = [
+const workflowSteps = [
     { id: 1, title: 'Customer Info', icon: User },
     { id: 2, title: 'Loan Details', icon: Banknote },
     { id: 3, title: 'Classification', icon: Filter },
-    { id: 4, title: 'Personal', icon: FileCheck },
-    { id: 5, title: 'Documents', icon: UploadCloud },
 ];
 
 function NewLeadWizardContent() {
@@ -24,600 +22,622 @@ function NewLeadWizardContent() {
     const step = parseInt(searchParams.get('step') || '1');
     const { user } = useAuth();
 
-    const [loading, setLoading] = useState(false);
-    const [errors, setErrors] = useState<Record<string, string>>({});
-    const [apiError, setApiError] = useState<string | null>(null);
-    const [lastSaved, setLastSaved] = useState<string | null>(null);
+    // Session/Core State
     const [leadId, setLeadId] = useState<string | null>(null);
+    const [referenceId, setReferenceId] = useState<string | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [initLoading, setInitLoading] = useState(true);
+    const [lastSaved, setLastSaved] = useState<string | null>(null);
     const [isModified, setIsModified] = useState(false);
 
-    // Categories and Products
-    const [categories, setCategories] = useState<any[]>([]);
-    const [products, setProducts] = useState<any[]>([]);
-    const [loadingInventory, setLoadingInventory] = useState(false);
-
-    // Modals
-    const [showHelp, setShowHelp] = useState(false);
-    const [showAutofill, setShowAutofill] = useState(false);
-    const [showDuplicates, setShowDuplicates] = useState(false);
-    const [duplicateMatches, setDuplicateMatches] = useState<any[]>([]);
-
+    // Form State
     const [formData, setFormData] = useState<any>({
         full_name: '',
         phone: '',
+        father_or_husband_name: '',
+        dob: '',
         current_address: '',
         permanent_address: '',
         is_current_same: false,
         product_category_id: '',
+        product_type_id: '',
         primary_product_id: '',
-        interested_in: [], // Secondary products
+        interested_in: [],
         vehicle_rc: '',
         vehicle_ownership: '',
         vehicle_owner_name: '',
         vehicle_owner_phone: '',
-        interest_level: 'cold',
-        dob: '',
-        father_or_husband_name: '',
-        auto_filled: false,
-        ocr_status: null,
-        ocr_error: null,
-        asset_model: '', // Categorized name for UI
+        interest_level: 'hot',
+        asset_model: '', // UI tracking for category name
     });
 
-    const [calculatedAge, setCalculatedAge] = useState<number | null>(null);
+    // Validation/UI State
+    const [errors, setErrors] = useState<Record<string, string>>({});
+    const [apiError, setApiError] = useState<string | null>(null);
+    const [duplicateMatch, setDuplicateMatch] = useState<any>(null);
+    const [categories, setCategories] = useState<any[]>([]);
+    const [products, setProducts] = useState<any[]>([]);
+    const [showOCR, setShowOCR] = useState(false);
+    const [showHelp, setShowHelp] = useState(false);
+    const [showConfirm, setShowConfirm] = useState(false);
 
-    // Fetch Inventory Data
+    // 1) Initialize/Resume Draft
     useEffect(() => {
-        const fetchCategories = async () => {
+        const init = async () => {
             try {
-                const res = await fetch('/api/inventory/categories', { credentials: 'include' });
-                const data = await res.json();
-                if (data.success) setCategories(data.data);
-            } catch (e) { console.error("Failed to load categories", e); }
+                const res = await fetch('/api/leads/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ initializeDraft: true })
+                });
+                const result = await res.json();
+                if (result.success) {
+                    setLeadId(result.data.leadId);
+                    setReferenceId(result.data.referenceId);
+                    if (result.data.formData) {
+                        setFormData((prev: any) => ({ ...prev, ...result.data.formData }));
+                        setLastSaved('Draft resumed');
+                    }
+                } else {
+                    setApiError(result.error?.message || "Initialization failed");
+                }
+            } catch (e) {
+                setApiError("Connection lost. Please try again.");
+            } finally {
+                setInitLoading(false);
+            }
         };
-        fetchCategories();
+        init();
+    }, []);
+
+    // 2) Data Loading
+    useEffect(() => {
+        fetch('/api/inventory/categories').then(r => r.json()).then(d => d.success && setCategories(d.data));
     }, []);
 
     useEffect(() => {
         if (formData.asset_model) {
-            const fetchProducts = async () => {
-                setLoadingInventory(true);
-                try {
-                    const res = await fetch(`/api/inventory/products?category=${encodeURIComponent(formData.asset_model)}`, { credentials: 'include' });
-                    const data = await res.json();
-                    if (data.success) setProducts(data.data);
-                } catch (e) { console.error("Failed to load products", e); }
-                finally { setLoadingInventory(false); }
-            };
-            fetchProducts();
+            fetch(`/api/inventory/products?category=${encodeURIComponent(formData.asset_model)}`)
+                .then(r => r.json())
+                .then(d => d.success && setProducts(d.data));
         }
     }, [formData.asset_model]);
 
-    // Age Calculation
-    useEffect(() => {
-        if (formData.dob) {
-            const birthDate = new Date(formData.dob);
-            const today = new Date();
-            let age = today.getFullYear() - birthDate.getFullYear();
-            const m = today.getMonth() - birthDate.getMonth();
-            if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
-                age--;
-            }
-            setCalculatedAge(age);
-        } else {
-            setCalculatedAge(null);
+    // 3) Handlers & Normalization
+    const updateField = (field: string, value: any) => {
+        let fin = value;
+        // Auto-capitalize words for names
+        if (['full_name', 'father_or_husband_name', 'vehicle_owner_name'].includes(field)) {
+            fin = value.split(' ').map((s: string) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
         }
-    }, [formData.dob]);
+        if (field === 'vehicle_rc') fin = value.toUpperCase();
 
-    // Resumption Logic
-    useEffect(() => {
-        const checkInProgress = async () => {
-            try {
-                const res = await fetch('/api/leads/in-progress', { credentials: 'include' });
-                const result = await res.json();
-                if (result.success && result.data) {
-                    const lead = result.data;
+        setFormData((prev: any) => {
+            const next = { ...prev, [field]: fin };
+            if (field === 'is_current_same' && fin) next.permanent_address = next.current_address;
+            if (field === 'current_address' && next.is_current_same) next.permanent_address = fin;
+            return next;
+        });
+        setIsModified(true);
+        if (errors[field]) setErrors(prev => { const n = { ...prev }; delete n[field]; return n; });
+    };
 
-                    setLeadId(lead.id);
-                    setFormData((prev: any) => ({
-                        ...prev,
-                        full_name: lead.full_name || lead.owner_name || '',
-                        phone: lead.phone || lead.owner_contact || '',
-                        current_address: lead.current_address || lead.shop_address || '',
-                        permanent_address: lead.permanent_address || '',
-                        product_category_id: lead.product_category_id || '',
-                        primary_product_id: lead.primary_product_id || '',
-                        interested_in: lead.interested_in || [],
-                        interest_level: lead.interest_level || 'cold',
-                        vehicle_rc: lead.vehicle_rc || '',
-                        vehicle_ownership: lead.vehicle_ownership || '',
-                        vehicle_owner_name: lead.vehicle_owner_name || '',
-                        vehicle_owner_phone: lead.vehicle_owner_phone || '',
-                        asset_model: lead.asset_model || '',
-                        dob: lead.dob ? new Date(lead.dob).toISOString().split('T')[0] : '',
-                        father_or_husband_name: lead.father_or_husband_name || '',
-                        auto_filled: lead.auto_filled || false,
-                        ocr_status: lead.ocr_status,
-                        ocr_error: lead.ocr_error,
-                        is_current_same: lead.current_address === lead.permanent_address && !!lead.current_address
-                    }));
-                    setLastSaved(new Date(lead.updated_at).toLocaleTimeString());
+    const handlePhoneBlur = async () => {
+        if (!formData.phone || formData.phone.length < 10) return;
+        try {
+            const res = await fetch(`/api/leads/check-duplicate?phone=${encodeURIComponent(formData.phone)}`);
+            const data = await res.json();
+            if (data.success && data.data.length > 0) {
+                setDuplicateMatch(data.data[0]);
+            } else {
+                setDuplicateMatch(null);
+            }
+        } catch (e) { console.error("Duplicate check failed"); }
+    };
 
-                    if (!searchParams.get('step')) {
-                        router.replace(`?step=${lead.workflow_step}`);
-                    }
-                }
-            } catch (e) { console.error("Resumption failed", e); }
-        };
-        checkInProgress();
-    }, []);
+    const calculateAge = (dob: string) => {
+        if (!dob) return 0;
+        return new Date().getFullYear() - new Date(dob).getFullYear();
+    };
 
-    const ensureLead = async () => {
-        if (leadId) return leadId;
+    const validate = () => {
+        const e: any = {};
+        if (!formData.full_name || formData.full_name.trim().length < 2) e.full_name = "Min 2 chars";
+        if (!formData.phone || formData.phone.length < 10) e.phone = "Invalid phone";
+        if (!formData.dob) e.dob = "Required";
+        else if (calculateAge(formData.dob) < 18) e.dob = "Must be 18+";
+        if (!formData.product_category_id) e.product_category_id = "Required";
+        if (!formData.primary_product_id) e.primary_product_id = "Required";
+        if (formData.current_address && formData.current_address.length < 10) e.current_address = "Address too short";
 
+        const isVehicle = ['2W', '3W', '4W'].includes(formData.asset_model);
+        if (isVehicle && formData.vehicle_rc?.trim()) {
+            if (!formData.vehicle_ownership) e.vehicle_ownership = "*";
+            if (!formData.vehicle_owner_name) e.vehicle_owner_name = "*";
+            if (!formData.vehicle_owner_phone) e.vehicle_owner_phone = "*";
+        }
+        setErrors(e);
+        return Object.keys(e).length === 0;
+    };
+
+    const commitStep = async () => {
+        if (!validate()) return;
+        setShowConfirm(true);
+    };
+
+    const handleFinalConfirm = async () => {
+        setShowConfirm(false);
+        setLoading(true);
         try {
             const res = await fetch('/api/leads/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    interest_level: formData.interest_level || 'cold'
-                })
+                body: JSON.stringify({ ...formData, leadId, commitStep: true })
             });
             const result = await res.json();
-
-            if (res.ok) {
-                const id = result.data?.leadId || result.data?.id || result.leadId || result.id || result.data?.lead_id;
-                if (id) {
-                    setLeadId(id);
-                    return id;
-                }
-                setApiError("Lead initialized but no leadId returned from API");
+            if (result.success) {
+                const { leadId: updatedLeadId } = result.data;
+                // Since Step 2 is not implemented yet, all classifications exit workflow for now.
+                router.push(`/dealer-portal/leads/${updatedLeadId}`);
             } else {
-                setApiError(result.error?.message || "Failed to initialize lead");
+                setApiError(result.error?.message || "Server Error");
             }
-        } catch (e) {
-            console.error("ensureLead failed", e);
-            setApiError("Connection error during lead initialization");
-        }
-        return null;
-    };
-
-    const updateField = (field: string, value: any) => {
-        let finalValue = value;
-
-        // Auto-capitalize Full Name / Owner Name
-        if (['full_name', 'father_or_husband_name', 'vehicle_owner_name'].includes(field)) {
-            finalValue = value.split(' ').map((s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()).join(' ');
-        }
-
-        // Vehicle RC uppercase
-        if (field === 'vehicle_rc') {
-            finalValue = value.toUpperCase();
-        }
-
-        setFormData((prev: any) => ({ ...prev, [field]: finalValue }));
-        setIsModified(true);
-        if (errors[field]) {
-            setErrors(prev => {
-                const next = { ...prev };
-                delete next[field];
-                return next;
-            });
-        }
-    };
-
-    const handleDuplicateCheck = async () => {
-        if (!formData.phone || formData.phone.length < 13) return;
-        try {
-            const res = await fetch(`/api/leads/check-duplicate?phone=${encodeURIComponent(formData.phone)}`, { credentials: 'include' });
-            const data = await res.json();
-            if (data.success && data.data.length > 0) {
-                setDuplicateMatches(data.data);
-                setShowDuplicates(true);
-            }
-        } catch (e) { console.error("Duplicate check failed", e); }
-    };
-
-    const handleAutofill = (data: any) => {
-        const fields = {
-            full_name: data.full_name || data.fullName || '',
-            father_or_husband_name: data.father_or_husband_name || data.fatherName || '',
-            dob: data.dob || '',
-            permanent_address: data.permanent_address || data.address || ''
-        };
-
-        const missing: string[] = [];
-        if (!fields.full_name) missing.push("Full Name");
-        if (!fields.father_or_husband_name) missing.push("Father/Husband Name");
-        if (!fields.dob) missing.push("DOB");
-        if (!fields.permanent_address) missing.push("Permanent Address");
-
-        const status = data.ocrStatus || data.ocr_status || (missing.length === 4 ? 'failed' : missing.length > 0 ? 'partial' : 'success');
-
-        setFormData((prev: any) => ({
-            ...prev,
-            ...fields,
-            auto_filled: status !== 'failed',
-            ocr_status: status,
-            ocr_error: missing.length > 0 ? `Could not read the following fields: ${missing.join(', ')}` : null
-        }));
-        setIsModified(true);
-    };
-
-    const handleCreateLead = async () => {
-        const stepErrors: any = {};
-
-        // Validations per BRD
-        if (!formData.full_name || formData.full_name.length < 2) stepErrors.full_name = "Please enter a valid full name";
-        if (!/^[a-zA-Z\s.-]+$/.test(formData.full_name)) stepErrors.full_name = "No special characters except (.) and (-)";
-
-        if (!formData.phone || !/^\+91[0-9]{10}$/.test(formData.phone)) stepErrors.phone = "Valid phone required (+91XXXXXXXXXX)";
-        if (!formData.primary_product_id) stepErrors.primary_product_id = "Product selection required";
-
-        if (!formData.dob) {
-            stepErrors.dob = "DOB required";
-        } else if (calculatedAge && calculatedAge < 18) {
-            stepErrors.dob = "Customer must be at least 18 years old";
-        }
-
-        if (formData.current_address && formData.current_address.length < 20) {
-            stepErrors.current_address = "Address must be at least 20 characters";
-        }
-
-        // Vehicle Conditional Validation
-        if (formData.vehicle_rc) {
-            if (!formData.vehicle_ownership) stepErrors.vehicle_ownership = "Required (Vehicle detected)";
-            if (!formData.vehicle_owner_name) stepErrors.vehicle_owner_name = "Required (Vehicle detected)";
-            if (!formData.vehicle_owner_phone) stepErrors.vehicle_owner_phone = "Required (Vehicle detected)";
-        }
-
-        if (Object.keys(stepErrors).length > 0) {
-            setErrors(stepErrors);
-            setApiError("Please fix validation errors");
-            return;
-        }
-
-        if (!confirm("Are you sure you want to create this lead?")) return;
-
-        setLoading(true);
-        try {
-            const url = leadId ? `/api/dealer/leads/${leadId}` : '/api/leads/create';
-            const method = leadId ? 'PATCH' : 'POST';
-
-            const res = await fetch(url, {
-                method,
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify(formData)
-            });
-            const result = await res.json();
-            if (!res.ok) throw new Error(result.error?.message || "Failed to save lead");
-
-            const finalId = result.data?.leadId || result.data?.id || leadId;
-            if (!leadId && finalId) setLeadId(finalId);
-
-            setLastSaved(new Date().toLocaleTimeString());
-            setIsModified(false);
-
-            if (formData.interest_level === 'hot') {
-                router.push('?step=2');
-            } else {
-                router.push('/dealer-portal/leads');
-            }
-        } catch (e: any) {
-            setApiError(e.message);
+        } catch (err) {
+            setApiError("Connection failed. Please retry.");
         } finally {
             setLoading(false);
         }
     };
 
-    const handleCancel = () => {
-        if (!isModified) {
-            router.push('/dealer-portal/leads');
-            return;
-        }
-        if (confirm("You have unsaved changes. Discard?")) {
-            router.push('/dealer-portal/leads');
+    const handleCancel = async () => {
+        if (!isModified) { router.push('/dealer-portal'); return; }
+        if (confirm("Discard draft?")) {
+            if (leadId) await fetch(`/api/leads/draft/${leadId}`, { method: 'DELETE' });
+            router.push('/dealer-portal');
         }
     };
 
-    const isVehicleCategory = categories.find(c => c.name === formData.asset_model)?.isVehicleCategory;
+    if (initLoading) return <div className="min-h-screen flex items-center justify-center bg-[#F8F9FB]"><Loader2 className="w-10 h-10 animate-spin text-[#1D4ED8]" /></div>;
+
+    const isVehicleCategory = ['2W', '3W', '4W'].includes(formData.asset_model);
 
     return (
-        <div className="max-w-5xl mx-auto py-8 px-4">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-8">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-900 tracking-tight">New Lead Application</h1>
-                    {leadId && <p className="text-brand-600 font-mono text-sm mt-1">Ref ID: {leadId}</p>}
-                </div>
-                <div className="flex gap-2">
-                    <button onClick={() => setShowHelp(true)} className="p-2 bg-white border rounded-xl hover:bg-gray-50 text-gray-500 shadow-sm transition-all hover:scale-105">
-                        <Info className="w-5 h-5" />
-                    </button>
-                    <button onClick={() => setShowAutofill(true)} className="flex items-center gap-2 px-4 py-2 bg-brand-50 text-brand-600 border border-brand-200 rounded-xl font-bold text-sm shadow-sm transition-all hover:scale-105 active:scale-95">
-                        <Scan className="w-4 h-4" />
-                        Auto-fill
-                    </button>
-                </div>
-            </div>
-
-            {/* Progress Bar */}
-            <div className="flex items-center justify-between mb-12 relative px-4">
-                <div className="absolute top-1/2 left-0 w-full h-1 bg-gray-100 -z-10 rounded-full" />
-                <div className="absolute top-1/2 left-0 h-1 bg-brand-600 -z-10 rounded-full transition-all duration-500 shadow-[0_0_10px_rgba(37,99,235,0.4)]" style={{ width: `${((step - 1) / (steps.length - 1)) * 100}%` }} />
-                {steps.map((s) => {
-                    const isActive = s.id === step;
-                    const isCompleted = s.id < step;
-                    const Icon = s.icon;
-                    return (
-                        <div key={s.id} className="flex flex-col items-center gap-2 bg-white px-2">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${isActive ? 'border-brand-600 bg-brand-50 text-brand-600 shadow-lg scale-110' : isCompleted ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-200 bg-white text-gray-400'}`}>
-                                {isCompleted ? <CheckCircle2 className="w-6 h-6" /> : <Icon className="w-5 h-5" />}
-                            </div>
-                            <span className={`text-[10px] font-bold uppercase tracking-wider ${isActive || isCompleted ? 'text-brand-700' : 'text-gray-400'}`}>{s.title}</span>
+        <div className="min-h-screen bg-[#F8F9FB]">
+            {/* Main container with increased bottom padding to avoid sticky footer overlap */}
+            <div className="max-w-[1200px] mx-auto px-6 py-8 pb-40">
+                {/* HEADER AREA */}
+                <header className="mb-8 flex justify-between items-start">
+                    <div className="flex gap-4">
+                        <button onClick={() => router.back()} className="mt-1 p-2 hover:bg-white transition-colors rounded-lg">
+                            <ChevronLeft className="w-6 h-6 text-gray-900" />
+                        </button>
+                        <div>
+                            <h1 className="text-[28px] font-black text-gray-900 leading-tight tracking-tight">Create New Lead</h1>
+                            <p className="text-sm text-gray-500 mt-0.5">
+                                Reference ID: <span className="font-medium">{referenceId || '#IT-XXXX-XXXXXXX'}</span>
+                            </p>
                         </div>
-                    );
-                })}
-            </div>
+                    </div>
 
-            {apiError && <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl flex items-center gap-3 animate-in fade-in slide-in-from-top-2"><AlertTriangle className="w-5 h-5" /><span>{apiError}</span><button onClick={() => setApiError(null)} className="ml-auto"><X className="w-4 h-4" /></button></div>}
-
-            <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-[0_20px_50px_rgba(0,0,0,0.05)]">
-                {step === 1 && (
-                    <div className="space-y-10 animate-in fade-in duration-500">
-                        {/* Section 1: Personal */}
-                        <div className="space-y-6">
-                            <div className="flex items-center gap-3 border-b pb-4">
-                                <div className="p-2 bg-brand-50 rounded-lg text-brand-600"><User className="w-5 h-5" /></div>
-                                <h2 className="text-xl font-bold text-gray-800">Customer Personal Information</h2>
-                            </div>
-
-                            {/* OCR Banners */}
-                            {formData.ocr_status === 'success' && (
-                                <div className="p-3 bg-brand-50 border border-brand-100 rounded-xl flex items-center gap-2 text-xs text-brand-700 font-bold animate-in fade-in slide-in-from-top-1">
-                                    <CheckCircle2 className="w-4 h-4 text-brand-600" />
-                                    Auto-filled from Aadhaar (edit if needed)
-                                </div>
-                            )}
-                            {formData.ocr_status === 'partial' && (
-                                <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-2 text-xs text-amber-700 font-bold animate-in fade-in slide-in-from-top-1">
-                                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                                    <div>
-                                        <p>{formData.ocr_error}. Please enter manually.</p>
+                    <div className="flex flex-col items-end gap-5">
+                        <div className="flex items-center gap-12">
+                            <div>
+                                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-right mb-1.5">Workflow Progress</p>
+                                <div className="flex items-center gap-6">
+                                    <span className="text-xs font-bold text-[#1D4ED8] whitespace-nowrap">Step {step} of 5</span>
+                                    <div className="flex gap-2.5">
+                                        {[1, 2, 3, 4, 5].map(s => (
+                                            <div key={s} className={`h-[6px] w-[50px] rounded-full transition-all duration-300 ${s <= step ? 'bg-[#0047AB]' : 'bg-gray-200'}`} />
+                                        ))}
                                     </div>
                                 </div>
-                            )}
-                            {formData.ocr_status === 'failed' && (
-                                <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex items-start gap-2 text-xs text-red-700 font-bold animate-in fade-in slide-in-from-top-1">
-                                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                                    <div>
-                                        <p>Could not read document clearly. Please upload a clearer image or enter details manually.</p>
-                                    </div>
-                                </div>
-                            )}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-                                <Input label="Full Name *" value={formData.full_name} onChange={(v: string) => updateField('full_name', v)} placeholder="e.g. Rajesh Kumar" error={errors.full_name} autoComplete="name" />
-                                <div className="space-y-1.5">
-                                    <Input label="Mobile Number *" value={formData.phone} onChange={(v: string) => updateField('phone', v)} onBlur={handleDuplicateCheck} placeholder="+91XXXXXXXXXX" error={errors.phone} autoComplete="tel" />
-                                    <p className="text-[10px] text-gray-400">Must include +91 prefix</p>
-                                </div>
-                                <Input label="Father/Husband Name *" value={formData.father_or_husband_name} onChange={(v: string) => updateField('father_or_husband_name', v)} error={errors.father_or_husband_name} />
-                                <div className="space-y-1">
-                                    <Input label="Date of Birth *" type="date" value={formData.dob} onChange={(v: string) => updateField('dob', v)} error={errors.dob} icon={<Calendar className="w-4 h-4" />} />
-                                    {calculatedAge !== null && (
-                                        <p className={`text-[10px] font-bold px-1 ${calculatedAge < 18 ? 'text-red-500' : 'text-brand-600'}`}>
-                                            Calculated Age: {calculatedAge} years {calculatedAge < 18 ? '(Minimum 18 required)' : ''}
-                                        </p>
-                                    )}
-                                </div>
-                                <TextArea label="Current Address (Min 20 chars)" value={formData.current_address} onChange={(v: string) => updateField('current_address', v)} error={errors.current_address} />
-                                <div className="md:col-span-2 flex items-center gap-2 px-1">
-                                    <input type="checkbox" id="sameAddress" checked={formData.is_current_same} onChange={(e) => {
-                                        updateField('is_current_same', e.target.checked);
-                                        if (e.target.checked) updateField('permanent_address', formData.current_address);
-                                    }} className="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500" />
-                                    <label htmlFor="sameAddress" className="text-sm text-gray-600 cursor-pointer text-[10px] font-bold uppercase tracking-wider">Permanent address is same as current</label>
-                                </div>
-                                {!formData.is_current_same && <TextArea label="Permanent Address" value={formData.permanent_address} onChange={(v: string) => updateField('permanent_address', v)} />}
                             </div>
+                            <button onClick={() => setShowHelp(true)} className="p-2 text-gray-400 hover:text-gray-600 transition-all">
+                                <Info className="w-6 h-6" />
+                            </button>
                         </div>
 
-                        {/* Section 2: Products */}
-                        <div className="space-y-6">
-                            <div className="flex items-center gap-3 border-b pb-4">
-                                <div className="p-2 bg-brand-50 rounded-lg text-brand-600"><Filter className="w-5 h-5" /></div>
-                                <h2 className="text-xl font-bold text-gray-800">Product Details</h2>
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                <Select label="Product Category *" value={formData.asset_model} onChange={(v: string) => {
-                                    const cat = categories.find(c => c.name === v);
-                                    setFormData((prev: any) => ({ ...prev, asset_model: v, product_category_id: cat?.id || '' }));
-                                }}>
-                                    <option value="">Select Category</option>
-                                    {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                                </Select>
-                                {formData.asset_model && (
-                                    <div className="space-y-4">
-                                        <Select label="Primary Product *" value={formData.primary_product_id} onChange={(v: string) => updateField('primary_product_id', v)} error={errors.primary_product_id}>
-                                            <option value="">Select Primary Model</option>
-                                            {products.map(p => (
-                                                <option key={p.id} value={p.id}>{p.name} {!p.inStock ? '(Order from OEM)' : ''}</option>
-                                            ))}
-                                        </Select>
+                        <button
+                            onClick={() => setShowOCR(true)}
+                            className="flex items-center gap-3 px-6 py-2.5 bg-white border border-gray-200 rounded-xl font-bold text-sm text-gray-800 shadow-sm hover:border-[#1D4ED8] hover:text-[#1D4ED8] transition-all"
+                        >
+                            <Scan className="w-5 h-5" />
+                            Auto-fill from ID
+                        </button>
+                    </div>
+                </header>
 
-                                        <div className="space-y-2">
-                                            <label className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Secondary Products (Interested In)</label>
-                                            <div className="flex flex-wrap gap-2 p-3 bg-gray-50 border rounded-2xl min-h-[50px]">
-                                                {formData.interested_in.length === 0 && <span className="text-[10px] text-gray-400 italic">No secondary products selected</span>}
-                                                {formData.interested_in.map((pid: string) => {
-                                                    const p = products.find(prod => prod.id === pid);
-                                                    return (
-                                                        <div key={pid} className="flex items-center gap-1.5 px-3 py-1 bg-white border border-brand-200 text-brand-700 rounded-full text-[10px] font-bold shadow-sm animate-in zoom-in-95">
-                                                            {p?.name || pid}
-                                                            <button onClick={() => updateField('interested_in', formData.interested_in.filter((id: string) => id !== pid))} className="hover:text-red-500 transition-colors">
-                                                                <X className="w-3 h-3" />
-                                                            </button>
-                                                        </div>
-                                                    );
-                                                })}
+                {/* ERROR/WARNING BANNERS */}
+                <div className="mb-6 space-y-4">
+                    {apiError && (
+                        <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex items-center justify-between">
+                            <div className="flex items-center gap-3 text-red-700 font-medium text-sm">
+                                <AlertCircle className="w-5 h-5" />
+                                {apiError}
+                            </div>
+                            <button onClick={() => setApiError(null)} className="p-1 hover:bg-white rounded-md transition-colors"><X className="w-5 h-5" /></button>
+                        </div>
+                    )}
+                </div>
+
+                {/* MAIN FORM */}
+                <main className="grid grid-cols-1 gap-6">
+                    {step === 1 && (
+                        <>
+                            {/* PERSONAL INFO */}
+                            <Card title="Personal Information">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
+                                    <InputField label="Full Name" value={formData.full_name} onChange={(v: string) => updateField('full_name', v)} error={errors.full_name} placeholder="Vijay Sharma" />
+                                    <InputField label="Father/Husband Name" value={formData.father_or_husband_name} onChange={(v: string) => updateField('father_or_husband_name', v)} error={errors.father_or_husband_name} placeholder="Richard Doe" />
+
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-bold text-gray-900 px-1">Date of Birth</label>
+                                        <div className="relative">
+                                            <input
+                                                type="date"
+                                                value={formData.dob ?? ''}
+                                                onChange={e => updateField('dob', e.target.value)}
+                                                className={`w-full h-11 pl-12 pr-4 bg-white border-2 rounded-xl outline-none transition-all placeholder-gray-400 focus:border-[#1D4ED8] focus:ring-4 focus:ring-blue-50/50 text-sm ${errors.dob ? 'border-red-500' : 'border-[#EBEBEB]'}`}
+                                            />
+                                            <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
+                                                <Calendar className="w-5 h-5" />
                                             </div>
-                                            <div className="flex gap-2">
-                                                <select className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand-500/10" onChange={(e) => {
-                                                    if (e.target.value && !formData.interested_in.includes(e.target.value)) {
-                                                        updateField('interested_in', [...formData.interested_in, e.target.value]);
-                                                    }
-                                                    e.target.value = '';
-                                                }}>
-                                                    <option value="">Add Another Product</option>
-                                                    {products.filter(p => p.id !== formData.primary_product_id).map(p => (
-                                                        <option key={p.id} value={p.id}>{p.name}</option>
-                                                    ))}
-                                                </select>
-                                            </div>
+                                            {!formData.dob && <span className="absolute left-12 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">Pick a date</span>}
                                         </div>
                                     </div>
-                                )}
-                            </div>
-                        </div>
 
-                        {/* Section 3: Vehicle (Conditional) */}
-                        {isVehicleCategory && (
-                            <div className="space-y-6 pt-4 bg-gray-50/50 p-6 rounded-3xl border border-gray-100">
-                                <div className="flex items-center gap-3 border-b border-gray-200 pb-4">
-                                    <div className="p-2 bg-brand-100 rounded-lg text-brand-700 shadow-sm"><Banknote className="w-5 h-5" /></div>
-                                    <h2 className="text-xl font-bold text-gray-800">Existing Vehicle Information</h2>
-                                </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div className="space-y-1.5">
-                                        <Input label="Vehicle Registration Number (RC) *" value={formData.vehicle_rc} onChange={(v: string) => updateField('vehicle_rc', v)} placeholder="TS09AB1234" className="uppercase" />
-                                        {formData.vehicle_rc && (
-                                            <div className="p-2 bg-brand-50 border border-brand-100 rounded-lg flex items-center gap-2 text-[10px] text-brand-700 font-bold animate-in slide-in-from-left-2">
-                                                <AlertCircle className="w-3 h-3" />
-                                                Vehicle details entered. Dependent fields are now required.
-                                            </div>
-                                        )}
+                                    <InputField label="Phone Number" value={formData.phone} onChange={(v: string) => updateField('phone', v)} onBlur={handlePhoneBlur} error={errors.phone} placeholder="9876543210" />
+
+                                    <div className="md:col-span-2 space-y-2">
+                                        <label className="text-sm font-bold text-gray-900 px-1">Current Address</label>
+                                        <textarea
+                                            value={formData.current_address ?? ''}
+                                            onChange={(e) => updateField('current_address', e.target.value)}
+                                            className={`w-full min-h-[60px] px-4 py-3 bg-white border-2 rounded-xl outline-none transition-all placeholder-gray-400 focus:border-[#1D4ED8] focus:ring-4 focus:ring-blue-50/50 text-sm ${errors.current_address ? 'border-red-500' : 'border-[#EBEBEB]'}`}
+                                            placeholder="123, Main Street, City, State - 123456"
+                                        />
                                     </div>
-                                    <Select label={`Vehicle Ownership ${formData.vehicle_rc ? '*' : ''}`} value={formData.vehicle_ownership} onChange={(v: string) => updateField('vehicle_ownership', v)} error={errors.vehicle_ownership}>
-                                        <option value="">Select Ownership</option>
-                                        <option>Self</option>
-                                        <option>Financed</option>
-                                        <option>Company</option>
-                                        <option>Leased</option>
-                                        <option>Family</option>
-                                    </Select>
-                                    <Input label={`Vehicle Owner Name ${formData.vehicle_rc ? '*' : ''}`} value={formData.vehicle_owner_name} onChange={(v: string) => updateField('vehicle_owner_name', v)} error={errors.vehicle_owner_name} />
-                                    <Input label={`Owner Phone ${formData.vehicle_rc ? '*' : ''}`} value={formData.vehicle_owner_phone} onChange={(v: string) => updateField('vehicle_owner_phone', v)} placeholder="+91..." error={errors.vehicle_owner_phone} />
+
+                                    <div className="md:col-span-2 space-y-2">
+                                        <div className="flex items-center justify-between px-1">
+                                            <label className="text-sm font-bold text-gray-900">Permanent Address</label>
+                                            <label className="flex items-center gap-2 cursor-pointer group">
+                                                <div className="relative">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={formData.is_current_same}
+                                                        onChange={(e) => updateField('is_current_same', e.target.checked)}
+                                                        className="peer sr-only"
+                                                    />
+                                                    <div className="w-4 h-4 rounded-full border-2 border-gray-300 peer-checked:border-[#0047AB] peer-checked:bg-[#0047AB] transition-all flex items-center justify-center">
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-white scale-0 peer-checked:scale-100 transition-all" />
+                                                    </div>
+                                                </div>
+                                                <span className="text-xs font-medium text-gray-600 transition-colors group-hover:text-gray-900">Same as current address</span>
+                                            </label>
+                                        </div>
+                                        <textarea
+                                            value={formData.permanent_address ?? ''}
+                                            disabled={formData.is_current_same}
+                                            onChange={(e) => updateField('permanent_address', e.target.value)}
+                                            className={`w-full min-h-[60px] px-4 py-3 bg-white border-2 rounded-xl outline-none transition-all placeholder-gray-400 focus:border-[#1D4ED8] focus:ring-4 focus:ring-blue-50/50 text-sm ${formData.is_current_same ? 'bg-gray-50 border-[#F5F5F5] text-gray-400' : 'border-[#EBEBEB]'}`}
+                                            placeholder="123, Main Street, City, State - 123456"
+                                        />
+                                    </div>
+                                </div>
+                            </Card>
+
+                            {/* PRODUCT + VEHICLE PAIR */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+                                <Card title="Product Details" className="lg:col-span-2">
+                                    <div className="space-y-6">
+                                        <SelectField
+                                            label="Product Category"
+                                            value={formData.asset_model}
+                                            onChange={(v: string) => {
+                                                const cat = categories.find(c => c.name === v);
+                                                setFormData((p: any) => ({ ...p, asset_model: v, product_category_id: cat?.id || '' }));
+                                                setIsModified(true);
+                                            }}
+                                            placeholder="Select from Current Inventory"
+                                        >
+                                            {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                                        </SelectField>
+
+                                        <SelectField
+                                            label="Product Type"
+                                            value={formData.product_type_id}
+                                            onChange={(v: string) => updateField('product_type_id', v)}
+                                            placeholder="Select Product type"
+                                        >
+                                            <option value="consumer">Consumer</option>
+                                            <option value="commercial">Commercial</option>
+                                        </SelectField>
+                                    </div>
+                                </Card>
+
+                                <Card title="Vehicle Details" className="lg:col-span-3">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-6">
+                                        <InputField
+                                            label="Vehicle Reg. Number"
+                                            placeholder="HR 35 A 78989"
+                                            value={formData.vehicle_rc}
+                                            onChange={(v: string) => updateField('vehicle_rc', v)}
+                                        />
+                                        <SelectField
+                                            label="Vehicle Ownership"
+                                            value={formData.vehicle_ownership}
+                                            onChange={(v: string) => updateField('vehicle_ownership', v)}
+                                            placeholder="Select ownership"
+                                        >
+                                            <option>Self</option>
+                                            <option>Financed</option>
+                                            <option>Company</option>
+                                            <option>Leased</option>
+                                            <option>Family</option>
+                                        </SelectField>
+                                        <InputField
+                                            label="Owner Full Name"
+                                            value={formData.vehicle_owner_name}
+                                            onChange={(v: string) => updateField('vehicle_owner_name', v)}
+                                            placeholder="Vijay Sharma"
+                                        />
+                                        <InputField
+                                            label="Owner Phone"
+                                            value={formData.vehicle_owner_phone}
+                                            onChange={(v: string) => updateField('vehicle_owner_phone', v)}
+                                            placeholder="+91 9876543210"
+                                        />
+                                    </div>
+                                </Card>
+                            </div>
+
+                            <Card title="Lead Classification">
+                                <div className="space-y-6">
+                                    <label className="text-sm font-bold text-gray-900 px-1">Lead Interest Level</label>
+                                    <div className="flex bg-[#F1F3F5] rounded-[14px] p-1.5">
+                                        {['hot', 'warm', 'cold'].map((lvl) => (
+                                            <button
+                                                key={lvl}
+                                                onClick={() => updateField('interest_level', lvl)}
+                                                className={`flex-1 py-3 text-sm font-bold rounded-[10px] transition-all capitalize tracking-tight ${formData.interest_level === lvl ? 'bg-[#0047AB] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                                            >
+                                                {lvl}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </Card>
+                        </>
+                    )}
+                </main>
+
+                <div className="sticky bottom-0 left-0 right-0 bg-[#F8F9FB] pt-4 pb-8 z-50">
+                    <div className="max-w-[1200px] mx-auto px-6">
+                        <div className="flex justify-between items-center bg-white border border-gray-100 rounded-[20px] px-8 py-5 shadow-[0_-8px_30px_rgb(0,0,0,0.04)]">
+                            <div className="flex items-center gap-3">
+                                <div className="bg-gray-100 px-4 py-1.5 rounded-full">
+                                    <span className="text-[11px] font-bold text-gray-500 uppercase tracking-widest leading-none">Last saved: {lastSaved || 'Just now'}</span>
                                 </div>
                             </div>
-                        )}
-
-                        {/* Section 4: Classification */}
-                        <div className="space-y-6">
-                            <div className="flex items-center gap-3 border-b pb-4">
-                                <div className="p-2 bg-brand-50 rounded-lg text-brand-600"><CheckCircle2 className="w-5 h-5" /></div>
-                                <h2 className="text-xl font-bold text-gray-800">Lead Qualification & Priority</h2>
-                            </div>
-                            <div className="flex flex-wrap gap-4">
-                                {[
-                                    { id: 'hot', label: 'Hot Lead', color: 'bg-red-500', bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700' },
-                                    { id: 'warm', label: 'Warm Lead', color: 'bg-amber-500', bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700' },
-                                    { id: 'cold', label: 'Cold Lead', color: 'bg-blue-500', bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' },
-                                ].map((choice) => (
-                                    <button
-                                        key={choice.id}
-                                        onClick={() => updateField('interest_level', choice.id)}
-                                        className={`flex items-center gap-3 px-6 py-4 rounded-2xl border-2 transition-all duration-300 ${formData.interest_level === choice.id ? `${choice.border} ${choice.bg} shadow-md scale-105` : 'border-gray-100 bg-white hover:border-gray-200'
-                                            }`}
-                                    >
-                                        <div className={`w-3 h-3 rounded-full ${choice.color}`} />
-                                        <span className={`font-bold ${formData.interest_level === choice.id ? choice.text : 'text-gray-500'}`}>{choice.label}</span>
-                                    </button>
-                                ))}
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={handleCancel}
+                                    className="px-8 py-2.5 border-2 border-[#EBEBEB] rounded-xl text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={commitStep}
+                                    disabled={loading}
+                                    className="px-10 py-2.5 bg-[#0047AB] text-white rounded-xl text-sm font-bold hover:bg-[#003580] transition-all flex items-center gap-2 disabled:opacity-50"
+                                >
+                                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Lead'}
+                                </button>
                             </div>
                         </div>
                     </div>
-                )}
+                </div>
             </div>
 
-            {/* Footer */}
-            <div className="flex items-center justify-between mt-8 p-1">
-                <div className="text-xs text-gray-400 italic">
-                    {lastSaved ? `Last saved at ${lastSaved}` : isModified ? 'Click Create to save progress' : ''}
+            {/* MODALS - These render nothing if not open, preventing invisible overlays */}
+            <OCRModal isOpen={showOCR} onClose={() => setShowOCR(false)} onResult={(data: any) => {
+                setFormData((p: any) => ({ ...p, ...data }));
+                setIsModified(true);
+            }} />
+            <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
+
+            {/* CONFIRMATION MODAL */}
+            {showConfirm && (
+                <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl w-full max-w-sm p-10 text-center shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                            <Save className="w-8 h-8 text-[#0047AB]" />
+                        </div>
+                        <h2 className="text-2xl font-black text-gray-900 mb-3 tracking-tight">Create Lead?</h2>
+                        <p className="text-sm text-gray-500 mb-10 leading-relaxed font-medium">Are you sure you want to finalize Step 1 and create this lead record?</p>
+                        <div className="flex flex-col gap-4">
+                            <button onClick={handleFinalConfirm} className="w-full py-4 bg-[#0047AB] text-white rounded-2xl font-bold tracking-tight shadow-xl shadow-blue-200">Yes, Create Lead</button>
+                            <button onClick={() => setShowConfirm(false)} className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-700 transition-colors">Go Back</button>
+                        </div>
+                    </div>
                 </div>
-                <div className="flex gap-4">
-                    <button onClick={handleCancel} className="px-6 py-3 text-gray-500 font-bold hover:text-gray-700 transition-colors">Cancel</button>
-                    <button onClick={handleCreateLead} disabled={loading} className="flex items-center gap-2 px-10 py-3 bg-brand-600 text-white rounded-2xl font-bold shadow-xl shadow-brand-500/20 hover:bg-brand-700 transition-all hover:scale-105 active:scale-95 disabled:opacity-50">
-                        {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-                        Create New Lead
+            )}
+        </div>
+    );
+}
+
+// UI HELPERS
+function Card({ title, children, className = "" }: { title: string, children: React.ReactNode, className?: string }) {
+    return (
+        // Removed overflow-hidden to prevent clipping of inputs or focus rings
+        <div className={`bg-white rounded-[24px] border border-[#E9ECEF] shadow-[0_8px_30px_rgb(0,0,0,0.02)] min-h-fit ${className}`}>
+            <div className="flex items-center gap-4 px-8 pt-8 pb-4">
+                <div className="w-[3px] h-6 bg-[#0047AB] rounded-full" />
+                <h3 className="text-lg font-black text-gray-900 tracking-tight">{title}</h3>
+            </div>
+            <div className="p-8 pt-4">
+                {children}
+            </div>
+        </div>
+    );
+}
+
+function InputField({ label, value, onChange, placeholder, error, type = "text", onBlur, required }: any) {
+    return (
+        <div className="space-y-2">
+            <label className="text-sm font-bold text-gray-900 px-1">
+                {label} {required && <span className="text-red-500">*</span>}
+            </label>
+            <input
+                type={type}
+                value={value ?? ''}
+                onChange={e => onChange(e.target.value)}
+                onBlur={onBlur}
+                placeholder={placeholder}
+                className={`w-full h-11 px-6 bg-white border-2 rounded-xl outline-none transition-all placeholder-gray-300 focus:border-[#1D4ED8] focus:ring-4 focus:ring-blue-50/50 text-sm ${error ? 'border-red-500' : 'border-[#EBEBEB]'}`}
+            />
+            {error && <p className="text-[10px] text-red-500 font-bold px-1 mt-1">{error}</p>}
+        </div>
+    );
+}
+
+function SelectField({ label, value, onChange, children, error, placeholder }: any) {
+    return (
+        <div className="space-y-2">
+            <label className="text-sm font-bold text-gray-900 px-1">{label}</label>
+            <div className="relative">
+                <select
+                    value={value ?? ''}
+                    onChange={e => onChange(e.target.value)}
+                    className={`w-full h-11 px-6 bg-white border-2 rounded-xl outline-none appearance-none transition-all focus:border-[#1D4ED8] focus:ring-4 focus:ring-blue-50/50 text-sm cursor-pointer ${error ? 'border-red-500' : 'border-[#EBEBEB]'} ${!value ? 'text-gray-400' : 'text-gray-900'}`}
+                >
+                    <option value="" disabled>{placeholder}</option>
+                    {children}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                    <ChevronRight className="w-4 h-4 rotate-90" />
+                </div>
+            </div>
+            {error && <p className="text-[10px] text-red-500 font-bold px-1 mt-1">{error}</p>}
+        </div>
+    );
+}
+
+function HelpModal({ isOpen, onClose }: any) {
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl w-full max-w-sm p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+                <div className="flex justify-between items-center mb-6">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-blue-50 rounded-xl text-[#0047AB]">
+                            <Info className="w-6 h-6" />
+                        </div>
+                        <h2 className="text-xl font-bold text-gray-900">Step 1 Guide</h2>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg"><X className="w-5 h-5 text-gray-400" /></button>
+                </div>
+                <div className="space-y-4 text-sm text-gray-600 leading-relaxed font-bold">
+                    <p>Enter the basic information for the lead. Fields with asterisks are mandatory.</p>
+                </div>
+                <button onClick={onClose} className="w-full mt-8 py-3 bg-gray-900 text-white rounded-xl font-bold hover:bg-black transition-colors">Got it</button>
+            </div>
+        </div>
+    );
+}
+
+function OCRModal({ isOpen, onClose, onResult }: any) {
+    const [status, setStatus] = useState<'idle' | 'scanning' | 'error'>('idle');
+    const [msg, setMsg] = useState('');
+
+    if (!isOpen) return null;
+
+    const handleScan = async () => {
+        const front = (document.getElementById('aadhaarFront') as HTMLInputElement).files?.[0];
+        const back = (document.getElementById('aadhaarBack') as HTMLInputElement).files?.[0];
+        if (!front || !back) { setMsg("Upload both sides to continue"); return; }
+
+        setStatus('scanning');
+        setMsg('');
+
+        const body = new FormData();
+        body.append('aadhaarFront', front);
+        body.append('aadhaarBack', back);
+
+        try {
+            const res = await fetch('/api/leads/autofillRequest', { method: 'POST', body });
+            const data = await res.json();
+            if (res.ok) {
+                onResult(data.data);
+                onClose();
+                setStatus('idle');
+            } else {
+                setMsg(data.error?.message || "Service error");
+                setStatus('error');
+            }
+        } catch (err) {
+            setMsg("Connection failed");
+            setStatus('error');
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <div className="bg-white rounded-[40px] w-full max-w-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
+                <div className="p-10 border-b border-gray-50 flex justify-between items-start">
+                    <div>
+                        <h2 className="text-2xl font-bold text-gray-900">Auto-fill from ID</h2>
+                        <p className="text-sm text-gray-500 mt-1">Extract profile info from Aadhaar card scan.</p>
+                    </div>
+                    <button onClick={onClose} className="p-3 bg-gray-50 hover:bg-gray-100 rounded-2xl text-gray-400 transition-all"><X className="w-6 h-6" /></button>
+                </div>
+
+                <div className="p-10 space-y-8 relative">
+                    {status === 'scanning' && (
+                        <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-10 flex flex-col items-center justify-center">
+                            <Loader2 className="w-12 h-12 text-[#0047AB] animate-spin mb-4" />
+                            <p className="text-xl font-bold text-gray-900">Processing......</p>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-center">
+                        {['Front', 'Back'].map(side => (
+                            <div key={side} className="space-y-3">
+                                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Aadhaar {side}</label>
+                                <label className="flex flex-col items-center justify-center h-44 border-2 border-dashed border-gray-100 rounded-[32px] cursor-pointer hover:bg-gray-50 hover:border-[#0047AB]/20 transition-all group overflow-hidden">
+                                    <input type="file" id={`aadhaar${side}`} className="hidden" accept="image/png, image/jpeg, application/pdf" />
+                                    <div className="p-4 bg-gray-50 rounded-2xl group-hover:bg-[#0047AB]/5 transition-colors mb-3">
+                                        <Camera className="w-8 h-8 text-gray-300 group-hover:text-[#0047AB]" />
+                                    </div>
+                                    <span className="text-xs font-bold text-gray-400 group-hover:text-gray-900">Click to upload</span>
+                                </label>
+                            </div>
+                        ))}
+                    </div>
+
+                    {msg && <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-xs font-bold border border-red-100 animate-in shake duration-300 text-center">{msg}</div>}
+                </div>
+
+                <div className="px-10 py-8 bg-gray-50 flex gap-4">
+                    <button onClick={onClose} className="flex-1 py-4 text-sm font-semibold text-gray-400 hover:text-gray-700">Cancel</button>
+                    <button
+                        onClick={handleScan}
+                        disabled={status === 'scanning'}
+                        className="flex-[2] py-4 bg-[#0047AB] text-white rounded-2xl font-bold text-sm shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all"
+                    >
+                        Start Scanning
                     </button>
                 </div>
             </div>
-
-            {/* Modals */}
-            <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
-            <AutofillModal
-                isOpen={showAutofill}
-                onClose={() => setShowAutofill(false)}
-                onAutofill={handleAutofill}
-                leadId={leadId}
-                ensureLead={ensureLead}
-            />
-            <DuplicateModal isOpen={showDuplicates} onClose={() => setShowDuplicates(false)} matches={duplicateMatches} onContinue={handleCreateLead} />
         </div>
     );
 }
 
 export default function NewLeadWizard() {
     return (
-        <Suspense fallback={<div>Loading...</div>}>
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-[#F8F9FB]"><Loader2 className="w-10 h-10 animate-spin text-[#1D4ED8]" /></div>}>
             <NewLeadWizardContent />
         </Suspense>
     );
 }
-
-const Input = ({ label, type = 'text', value, onChange, onBlur, placeholder, error, autoComplete, className = "", icon }: any) => (
-    <div className="space-y-1.5">
-        <label className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">{label}</label>
-        <div className="relative group">
-            <input
-                type={type}
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-                onBlur={onBlur}
-                className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl outline-none transition-all focus:bg-white focus:ring-4 focus:ring-brand-500/10 focus:border-brand-500 ${error ? 'border-red-300 ring-red-50 bg-red-50' : ''} ${className}`}
-                placeholder={placeholder}
-                autoComplete={autoComplete}
-            />
-            {icon && <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-brand-500">{icon}</div>}
-        </div>
-        {error && <p className="text-[10px] text-red-500 font-bold px-1">{error}</p>}
-    </div>
-);
-
-const TextArea = ({ label, value, onChange, error }: any) => (
-    <div className="space-y-1.5 md:col-span-2">
-        <label className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">{label}</label>
-        <textarea
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl outline-none transition-all focus:bg-white focus:ring-4 focus:ring-brand-500/10 focus:border-brand-500 min-h-[100px] ${error ? 'border-red-300 bg-red-50' : ''}`}
-        />
-        {error && <p className="text-[10px] text-red-500 font-bold px-1">{error}</p>}
-    </div>
-);
-
-const Select = ({ label, value, onChange, children, error }: any) => (
-    <div className="space-y-1.5">
-        <label className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">{label}</label>
-        <select
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl outline-none transition-all focus:bg-white focus:ring-4 focus:ring-brand-500/10 focus:border-brand-500 appearance-none bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22none%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cpath%20d%3D%22M5%207.5L10%2012.5L15%207.5%22%20stroke%3D%22%236B7280%22%20stroke-width%3D%221.67%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E')] bg-[length:20px_20px] bg-[right_1rem_center] bg-no-repeat ${error ? 'border-red-300 bg-red-50' : ''}`}
-        >
-            {children}
-        </select>
-        {error && <p className="text-[10px] text-red-500 font-bold px-1">{error}</p>}
-    </div>
-);

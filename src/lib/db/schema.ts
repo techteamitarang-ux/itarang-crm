@@ -147,7 +147,9 @@ export const leads = pgTable('leads', {
     dob: timestamp('dob', { withTimezone: true }),
     phone: varchar('phone', { length: 20 }),
     current_address: text('current_address'),
-    product_category_id: uuid('product_category_id'), // User requested uuid
+    is_current_same: boolean('is_current_same').notNull().default(false),
+    product_category_id: varchar('product_category_id', { length: 255 }), // Changed from uuid to match catalog
+    product_type_id: varchar('product_type_id', { length: 255 }), // Added for Step 1 selection
     vehicle_owner_name: text('vehicle_owner_name'),
     vehicle_owner_phone: varchar('vehicle_owner_phone', { length: 20 }),
     auto_filled: boolean('auto_filled').default(false).notNull(),

@@ -1,12 +1,12 @@
 import { db } from '@/lib/db';
 import { leads, personalDetails, auditLogs, accounts } from '@/lib/db/schema';
-import { successResponse, errorResponse, withErrorHandler, generateId, generateLeadReference } from '@/lib/api-utils';
+import { successResponse, errorResponse, withErrorHandler, generateId } from '@/lib/api-utils';
 import { requireRole } from '@/lib/auth-utils';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql, desc } from 'drizzle-orm';
 
 const step1Schema = z.object({
-    full_name: z.string().max(100).optional().nullable(),
+    full_name: z.string().optional().nullable(),
     phone: z.string().optional().nullable(),
     father_or_husband_name: z.string().optional().nullable(),
     dob: z.string().optional().nullable(),
@@ -15,167 +15,206 @@ const step1Schema = z.object({
     is_current_same: z.boolean().optional(),
     primary_product_id: z.string().optional().nullable(),
     product_category_id: z.string().optional().nullable(),
+    product_type_id: z.string().optional().nullable(),
     interest_level: z.enum(['hot', 'warm', 'cold']).optional().nullable(),
     vehicle_rc: z.string().optional().nullable(),
     vehicle_ownership: z.string().optional().nullable(),
     vehicle_owner_name: z.string().optional().nullable(),
     vehicle_owner_phone: z.string().optional().nullable(),
-    auto_filled: z.boolean().default(false),
-    ocr_status: z.enum(['success', 'partial', 'failed']).optional().nullable(),
-    ocr_error: z.string().optional().nullable(),
     interested_in: z.array(z.string()).optional(),
+    initializeDraft: z.boolean().optional(),
+    commitStep: z.boolean().optional(),
+    leadId: z.string().optional()
 });
+
+async function generateLeadReference() {
+    const year = new Date().getFullYear();
+    const prefix = `#IT-${year}`;
+    const [lastRecord] = await db.select({ reference_id: leads.reference_id })
+        .from(leads)
+        .where(sql`${leads.reference_id} LIKE ${prefix + '-%'}`)
+        .orderBy(desc(leads.reference_id))
+        .limit(1);
+
+    let sequenceNum = 1;
+    if (lastRecord?.reference_id) {
+        const lastSeq = lastRecord.reference_id.split('-').pop();
+        if (lastSeq) sequenceNum = parseInt(lastSeq) + 1;
+    }
+    return `${prefix}-${sequenceNum.toString().padStart(7, '0')}`;
+}
+
+const normalizePhone = (phone?: string | null) => {
+    if (!phone) return null;
+    let clean = phone.replace(/[^0-9]/g, '');
+    if (clean.length === 12 && clean.startsWith('91')) clean = clean.substring(2);
+    if (clean.length === 10) return `+91${clean}`;
+    return phone.startsWith('+') ? phone : `+91${clean}`;
+};
 
 export const POST = withErrorHandler(async (req: Request) => {
     const user = await requireRole(['dealer']);
-
-    // Debug Log for Step Id: 637
-    console.log('[DEBUG] Lead Creation Dealer Check:', {
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-        dealer_id: user.dealer_id
-    });
-
-    // DEV FALLBACK: If user is not associated with a dealer, pick first available account
     let dealer_id = user.dealer_id;
-    if (!dealer_id) {
-        console.log('[DEV] User missing dealer_id, seeking fallback account');
-        const [firstAccount] = await db.select().from(accounts).limit(1);
 
-        console.log('[DEV] firstAccount query result:', firstAccount);
-
-        if (firstAccount) {
-            dealer_id = firstAccount.id;
-        } else {
-            console.log('[DEV] No accounts found in DB. Creating a dummy account for dev...');
-            try {
-                const dummyId = `ACC-DEV-${Date.now()}`;
-                const [newAccount] = await db.insert(accounts).values({
-                    id: dummyId,
-                    business_name: 'Dev Demo Dealership',
-                    owner_name: 'Dev Admin',
-                    status: 'active'
-                }).returning({ id: accounts.id });
-
-                if (newAccount) {
-                    dealer_id = newAccount.id;
-                    console.log('[DEV] Created dummy account:', dealer_id);
-                }
-            } catch (accErr) {
-                console.error('[DEV] Failed to create dummy account:', accErr);
-            }
+    try {
+        if (!dealer_id) {
+            const [acc] = await db.select().from(accounts).limit(1);
+            dealer_id = acc?.id;
         }
+    } catch (err) {
+        console.error("Account lookup failed:", err);
+        return errorResponse("Failed to verify dealer account. Please try again.", 500);
     }
 
-    console.log('[DEV] Final resolved dealer_id:', dealer_id);
-
-    if (!dealer_id) {
-        return errorResponse('User not associated with a dealer and no fallback/dummy found', 403);
-    }
+    if (!dealer_id) return errorResponse('User not associated with a dealer', 403);
 
     const body = await req.json();
     const result = step1Schema.safeParse(body);
-    if (!result.success) {
-        return errorResponse('Validation failed', 400);
-    }
+    if (!result.success) return errorResponse('Validation failed', 400);
     const data = result.data;
 
-    // RESUME LOGIC: If an incomplete draft exists, return it instead of creating a new one
-    const existing = await db.select().from(leads).where(
-        and(
-            eq(leads.uploader_id, user.id),
-            eq(leads.status, 'INCOMPLETE')
-        )
-    ).limit(1);
+    // MODE 1: INITIALIZE DRAFT
+    if (data.initializeDraft) {
+        try {
+            // Resume existing incomplete draft for this user
+            const [existing] = await db.select().from(leads).where(
+                and(
+                    eq(leads.uploader_id, user.id),
+                    eq(leads.status, 'INCOMPLETE')
+                )
+            ).limit(1);
 
-    if (existing.length > 0) {
-        return successResponse({
-            leadId: existing[0].id,
-            referenceId: existing[0].reference_id,
-            workflow_step: existing[0].workflow_step
-        }, 200);
+            if (existing) {
+                return successResponse({
+                    leadId: existing.id,
+                    referenceId: existing.reference_id,
+                    formData: {
+                        full_name: existing.full_name,
+                        phone: existing.phone,
+                        current_address: existing.current_address,
+                        permanent_address: existing.permanent_address,
+                        is_current_same: existing.is_current_same,
+                        product_category_id: existing.product_category_id,
+                        product_type_id: existing.product_type_id,
+                        primary_product_id: existing.primary_product_id,
+                        interest_level: existing.interest_level,
+                        dob: existing.dob ? new Date(existing.dob).toISOString().split('T')[0] : '',
+                        father_or_husband_name: existing.father_or_husband_name,
+                        vehicle_rc: existing.vehicle_rc,
+                        vehicle_ownership: existing.vehicle_ownership,
+                        vehicle_owner_name: existing.vehicle_owner_name,
+                        vehicle_owner_phone: existing.vehicle_owner_phone,
+                        interested_in: existing.interested_in || []
+                    }
+                });
+            }
+
+            const leadId = await generateId('LEAD', leads);
+            const referenceId = await generateLeadReference();
+
+            await db.transaction(async (tx) => {
+                await tx.insert(leads).values({
+                    id: leadId,
+                    reference_id: referenceId,
+                    dealer_id,
+                    uploader_id: user.id,
+                    status: 'INCOMPLETE',
+                    workflow_step: 1,
+                    lead_source: 'dealer_referral', // Default for dealer portal
+                    owner_name: 'DRAFT',
+                    owner_contact: 'DRAFT',
+                });
+                await tx.insert(personalDetails).values({
+                    lead_id: leadId,
+                    dob: null,
+                    father_husband_name: null
+                });
+            });
+
+            return successResponse({ leadId, referenceId }, 201);
+        } catch (err) {
+            console.error("Draft initialization failed:", err);
+            return errorResponse("Failed to initialize or load your draft. Please try again.", 500);
+        }
     }
 
-    const leadReference = await generateId('LEAD', leads);
-    const referenceId = await generateLeadReference(leads);
-    const score = data.interest_level === 'hot' ? 90 : data.interest_level === 'warm' ? 60 : 30;
-    const workflow_step = data.interest_level === 'hot' ? 2 : 1;
+    // MODE 2: COMMIT STEP 1
+    if (data.commitStep) {
+        if (!data.leadId) return errorResponse('leadId required for commit', 400);
 
-    let leadId = '';
+        // Server-side strict validation
+        if (!data.full_name || data.full_name.trim().length < 2) return errorResponse('Full name required', 400);
+        if (!data.phone || data.phone.length < 10) return errorResponse('Valid phone required', 400);
+        if (!data.dob) return errorResponse('Date of birth required', 400);
 
-    await db.transaction(async (tx) => {
-        const [insertedLead] = await tx.insert(leads).values({
-            id: leadReference,
-            reference_id: referenceId,
-            dealer_id: dealer_id!,
-            uploader_id: user.id,
+        const birth = new Date(data.dob);
+        const age = new Date().getFullYear() - birth.getFullYear();
+        if (age < 18) return errorResponse('Age must be at least 18', 400);
 
-            // Core Identity
-            full_name: data.full_name,
-            phone: data.phone,
-            owner_name: data.full_name || 'Draft Lead',
-            owner_contact: data.phone || 'Draft Contact',
-            mobile: data.phone,
+        if (!data.product_category_id) return errorResponse('Product category required', 400);
+        if (!data.primary_product_id) return errorResponse('Primary product required', 400);
+        if (!data.interest_level) return errorResponse('Interest level required', 400);
 
-            // Addresses
-            current_address: data.current_address,
-            shop_address: data.current_address,
-            permanent_address: data.permanent_address,
+        const isVehicle = ['2W', '3W', '4W'].includes(data.product_category_id || '');
+        if (isVehicle && data.vehicle_rc?.trim()) {
+            if (!data.vehicle_ownership || !data.vehicle_owner_name || !data.vehicle_owner_phone) {
+                return errorResponse('Owner details required for vehicle registration', 400);
+            }
+        }
 
-            // Dates
-            dob: data.dob ? new Date(data.dob) : null,
-            father_or_husband_name: data.father_or_husband_name,
+        const normPhone = normalizePhone(data.phone)!;
+        const normOwnerPhone = normalizePhone(data.vehicle_owner_phone);
+        const score = data.interest_level === 'hot' ? 90 : data.interest_level === 'warm' ? 60 : 30;
 
-            // Product
-            product_category_id: data.product_category_id as any,
-            primary_product_id: data.primary_product_id,
+        try {
+            await db.transaction(async (tx) => {
+                await tx.update(leads).set({
+                    full_name: data.full_name?.trim(),
+                    phone: normPhone,
+                    owner_name: data.full_name?.trim()!,
+                    owner_contact: normPhone,
+                    mobile: normPhone,
+                    current_address: data.current_address?.trim(),
+                    permanent_address: data.is_current_same ? data.current_address?.trim() : data.permanent_address?.trim(),
+                    is_current_same: data.is_current_same || false,
+                    dob: new Date(data.dob!),
+                    father_or_husband_name: data.father_or_husband_name?.trim(),
+                    product_category_id: data.product_category_id,
+                    product_type_id: data.product_type_id,
+                    primary_product_id: data.primary_product_id,
+                    interest_level: data.interest_level!,
+                    lead_score: score,
+                    vehicle_rc: data.vehicle_rc?.toUpperCase().trim(),
+                    vehicle_ownership: data.vehicle_ownership,
+                    vehicle_owner_name: data.vehicle_owner_name?.trim(),
+                    vehicle_owner_phone: normOwnerPhone,
+                    interested_in: data.interested_in || [],
+                    updated_at: new Date()
+                }).where(eq(leads.id, data.leadId!));
 
-            // Vehicle
-            vehicle_rc: data.vehicle_rc,
-            vehicle_ownership: data.vehicle_ownership,
-            vehicle_owner_name: data.vehicle_owner_name,
-            vehicle_owner_phone: data.vehicle_owner_phone,
+                await tx.update(personalDetails).set({
+                    dob: new Date(data.dob!),
+                    father_husband_name: data.father_or_husband_name?.trim(),
+                    local_address: data.current_address?.trim()
+                }).where(eq(personalDetails.lead_id, data.leadId!));
 
-            // Classification
-            interest_level: data.interest_level || 'cold',
-            lead_score: score,
-            status: 'INCOMPLETE',
-            workflow_step: workflow_step,
-            lead_source: 'dealer_referral',
+                await tx.insert(auditLogs).values({
+                    id: `AUDIT-${Date.now()}`,
+                    entity_type: 'lead',
+                    entity_id: data.leadId!,
+                    action: 'LEAD_CREATED_STEP1',
+                    changes: data,
+                    performed_by: user.id,
+                    timestamp: new Date()
+                });
+            });
 
-            // OCR
-            auto_filled: data.auto_filled || false,
-            ocr_status: data.ocr_status,
-            ocr_error: data.ocr_error,
-            interested_in: data.interested_in || [],
-        }).returning({ id: leads.id });
+            return successResponse({ success: true, leadId: data.leadId });
+        } catch (err) {
+            console.error("Lead commit failed:", err);
+            return errorResponse("Something went wrong while saving the lead. Please try again.", 500);
+        }
+    }
 
-        leadId = insertedLead.id;
-
-        // Legacy Personal Details table support (syncing for now)
-        await tx.insert(personalDetails).values({
-            lead_id: leadId,
-            dob: data.dob ? new Date(data.dob) : null,
-            father_husband_name: data.father_or_husband_name,
-            local_address: data.current_address,
-        });
-
-        // Audit Log
-        await tx.insert(auditLogs).values({
-            id: `AUDIT-${Date.now()}`,
-            entity_type: 'lead',
-            entity_id: leadId,
-            action: 'create',
-            changes: data,
-            performed_by: user.id,
-            timestamp: new Date()
-        });
-    });
-
-    return successResponse({
-        leadId,
-        referenceId: referenceId,
-        workflow_step
-    }, 201);
+    return errorResponse('Invalid action', 400);
 });

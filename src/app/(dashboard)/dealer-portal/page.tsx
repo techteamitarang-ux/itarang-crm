@@ -91,8 +91,8 @@ export default function DealerDashboard() {
                     <div className="absolute -right-4 -bottom-4 bg-white/5 w-32 h-32 rounded-full blur-2xl group-hover:bg-white/10 transition-colors"></div>
                 </Link>
 
-                {/* Process Loan */}
-                <Link href="/dealer-portal/leads?status=qualified" className="group relative rounded-2xl bg-white border border-gray-100 p-6 shadow-card hover:shadow-lg transition-transform hover:-translate-y-1">
+                {/* Process Loan (Loan Facilitation Queue) */}
+                <Link href="/dealer-portal/loans/facilitation" className="group relative rounded-2xl bg-white border border-gray-100 p-6 shadow-card hover:shadow-lg transition-transform hover:-translate-y-1">
                     <div className="flex flex-col h-full justify-between min-h-[140px]">
                         <div className="p-3 bg-indigo-50 w-fit rounded-xl text-indigo-600">
                             <FileCheck className="w-6 h-6" />
@@ -105,7 +105,7 @@ export default function DealerDashboard() {
                 </Link>
 
                 {/* Add Asset */}
-                <Link href="/inventory" className="group relative rounded-2xl bg-white border border-gray-100 p-6 shadow-card hover:shadow-lg transition-transform hover:-translate-y-1">
+                <Link href="/dealer-portal/assets" className="group relative rounded-2xl bg-white border border-gray-100 p-6 shadow-card hover:shadow-lg transition-transform hover:-translate-y-1">
                     <div className="flex flex-col h-full justify-between min-h-[140px]">
                         <div className="p-3 bg-teal-50 w-fit rounded-xl text-teal-600">
                             <Battery className="w-6 h-6" />
@@ -146,10 +146,10 @@ export default function DealerDashboard() {
                             Reach all your customers instantly for just <span className="font-semibold text-white">₹99/- per month</span>. Drive engagement with targeted campaigns.
                         </p>
                     </div>
-                    <button className="whitespace-nowrap bg-white text-blue-900 hover:bg-blue-50 px-6 py-2.5 rounded-full font-semibold shadow-md transition-colors flex items-center gap-2">
+                    <Link href="/dealer-portal/campaigns/new" className="whitespace-nowrap bg-white text-blue-900 hover:bg-blue-50 px-6 py-2.5 rounded-full font-semibold shadow-md transition-colors flex items-center gap-2">
                         <Megaphone className="w-4 h-4" />
                         Start Campaign
-                    </button>
+                    </Link>
                 </div>
                 {/* Background Decor */}
                 <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
@@ -244,4 +244,3 @@ function LeadRow({ lead }: { lead: any }) {
         </Link>
     )
 }
-
